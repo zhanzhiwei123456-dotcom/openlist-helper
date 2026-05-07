@@ -246,23 +246,53 @@ class AListManager:
         alist/openlist 支持的子命令: server, start, stop, restart, version, admin
         允许的标志: --data, --force-bin-dir, --no-prefix, -d 等
         禁止: 含有 |、;、&、$、`、>、< 等shell注入字符的参数
+        规则: 只允许 子命令 + 选项标志 + 选项值，子命令后不能出现裸词
         """
         SAFE_SUBCOMMANDS = {
             "server", "start", "stop", "restart", "version", "admin",
             "help", "completion",
         }
         result = []
+        expect_value = False  # 上一个参数是 --key 形式，下一个参数是值
         parts = args_str.split()
         for part in parts:
             # 阻止 shell 注入字符
             if any(c in part for c in '|;&$`><\n\r'):
                 print(f"警告: 启动参数包含不安全字符，已忽略: {part}")
+                expect_value = False
                 continue
-            # 第一个参数必须是已知子命令
-            if not result and part.lstrip("-") not in SAFE_SUBCOMMANDS and not part.startswith("-"):
-                print(f"警告: 未知的子命令，已忽略: {part}")
+            # 如果上一个参数是选项标志，当前参数作为选项值允许通过
+            if expect_value:
+                if not part.startswith("-") and not part.endswith(".exe"):
+                    result.append(part)
+                else:
+                    print(f"警告: 选项值格式异常，已忽略: {part}")
+                expect_value = False
                 continue
-            result.append(part)
+            # 第一个非选项参数必须是已知子命令
+            if not result and not part.startswith("-"):
+                if part in SAFE_SUBCOMMANDS:
+                    result.append(part)
+                else:
+                    print(f"警告: 未知的子命令，已忽略: {part}")
+                continue
+            # 选项标志（以 - 或 -- 开头）
+            if part.startswith("-"):
+                # 短选项只允许单字母标志（如 -d, -v）或已知多字母组合
+                if not part.startswith("--"):
+                    flag = part.lstrip("-")
+                    # 只允许单字母短选项
+                    if not flag or len(flag) != 1 or not flag.isalpha():
+                        print(f"警告: 不允许的短选项，已忽略: {part}")
+                        continue
+                result.append(part)
+                # 以 -- 开头且不含 = 的选项，下一个参数可能是值
+                if part.startswith("--") and "=" not in part:
+                    expect_value = True
+                continue
+            # 子命令之后的裸词（非选项、非选项值）— 全部拒绝
+            # 这防止了 shell 注入拆分后的残留参数通过
+            print(f"警告: 不允许的参数（仅允许选项标志），已忽略: {part}")
         return result
 
     def _start_monitor(self):
